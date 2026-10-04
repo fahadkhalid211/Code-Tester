@@ -1,6 +1,6 @@
 import React from 'react';
 import { AuditResult } from '@/lib/types';
-import { Award, CheckCircle2, ShieldCheck, X, Printer, ShieldAlert } from 'lucide-react';
+import { Award, CheckCircle2, X, Printer, ShieldAlert } from 'lucide-react';
 
 interface ClientCertificateModalProps {
   result: AuditResult;
@@ -8,7 +8,7 @@ interface ClientCertificateModalProps {
 }
 
 export function ClientCertificateModal({ result, onClose }: ClientCertificateModalProps) {
-  const { projectName, timestamp, overallScore, letterGrade, passedGate, id, metrics, stackDetected } = result;
+  const { projectName, timestamp, overallScore, letterGrade, passedGate, id, metrics, clientHandoffStatus } = result;
 
   const handlePrint = () => {
     window.print();
@@ -59,9 +59,9 @@ export function ClientCertificateModal({ result, onClose }: ClientCertificateMod
 
           <div className="my-6 text-center text-xs text-zinc-300 leading-relaxed max-w-lg mx-auto">
             This document certifies that the software repository for{' '}
-            <span className="text-white font-bold underline">{projectName}</span> has been subjected to
-            automated static security analysis, database boundary tests, secret leak audits, and runtime reliability
-            checks via the VIBEGATE verification engine.
+            <span className="text-white font-bold underline">{projectName}</span> has been analysed by the
+            VIBEGATE automated static ruleset (secret detection, pattern-based security checks, dependency
+            checks). This is not a penetration test or a substitute for manual security review.
           </div>
 
           {/* Audit Metrics Grid */}
@@ -75,7 +75,7 @@ export function ClientCertificateModal({ result, onClose }: ClientCertificateMod
             <div>
               <p className="text-[10px] uppercase text-zinc-500 font-mono">Handoff Status</p>
               <p className={`text-xs font-bold mt-1.5 ${passedGate ? 'text-emerald-400' : 'text-rose-400'}`}>
-                {passedGate ? 'APPROVED' : 'CRITICAL BLOCK'}
+                {passedGate ? 'APPROVED' : clientHandoffStatus.startsWith('CONDITIONAL') ? 'CONDITIONAL' : 'BLOCKED'}
               </p>
             </div>
             <div>
@@ -103,15 +103,15 @@ export function ClientCertificateModal({ result, onClose }: ClientCertificateMod
 
             <div className="flex items-center justify-between p-2.5 rounded-lg bg-zinc-950/50 border border-zinc-800/80">
               <span className="text-zinc-300">2. Supabase RLS & Next.js Server Action Auth Gates</span>
-              {metrics.criticalCount === 0 ? (
+              {metrics.criticalCount === 0 && metrics.highCount === 0 ? (
                 <span className="text-emerald-400 flex items-center space-x-1 font-semibold">
                   <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>Validated (Auth Enforced)</span>
+                  <span>No findings (automated checks)</span>
                 </span>
               ) : (
                 <span className="text-rose-400 flex items-center space-x-1 font-semibold">
                   <ShieldAlert className="w-3.5 h-3.5" />
-                  <span>Violations Present</span>
+                  <span>Findings Present</span>
                 </span>
               )}
             </div>
@@ -148,7 +148,7 @@ export function ClientCertificateModal({ result, onClose }: ClientCertificateMod
           </div>
 
           <div className="mt-6 text-center text-[10px] text-zinc-500 font-mono">
-            Generated on {new Date(timestamp).toLocaleDateString()} at {new Date(timestamp).toLocaleTimeString()} UTC
+            Generated {new Date(timestamp).toUTCString()}
           </div>
         </div>
       </div>

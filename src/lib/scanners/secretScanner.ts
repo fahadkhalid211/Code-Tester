@@ -1,4 +1,5 @@
 import { AuditIssue, FileEntry } from '../types';
+import { maskSecret, PLACEHOLDER_RE } from './utils';
 
 interface SecretRule {
   id: string;
@@ -16,7 +17,7 @@ const SECRET_RULES: SecretRule[] = [
   {
     id: 'SEC-001',
     name: 'Leaked Supabase Service Role Key',
-    pattern: /eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+|SUPABASE_SERVICE_ROLE_KEY\s*=\s*['"]?[a-zA-Z0-9._-]+['"]?/i,
+    pattern: /eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+|SUPABASE_SERVICE_ROLE_KEY\s*[=:]\s*['"][a-zA-Z0-9._-]{20,}['"]/i,
     severity: 'critical',
     category: 'security',
     explanation: 'A Supabase Service Role key was detected in code. This key completely bypasses all Row-Level Security (RLS) policies and grants full superuser read/write access to your entire database.',
@@ -31,7 +32,7 @@ const SECRET_RULES: SecretRule[] = [
   {
     id: 'SEC-002',
     name: 'Exposed Stripe Secret Key',
-    pattern: /sk_(live|test)_[0-9a-zA-Z]{24,}/,
+    pattern: /(?<![A-Za-z0-9_-])sk_(live|test)_[0-9a-zA-Z]{24,}/,
     severity: 'critical',
     category: 'security',
     explanation: 'A live or test Stripe secret key was detected in source code. Secret keys can initiate charges, process refunds, and access sensitive customer banking details.',
@@ -46,11 +47,11 @@ const SECRET_RULES: SecretRule[] = [
   {
     id: 'SEC-003',
     name: 'Hardcoded OpenAI / Anthropic / AI API Key',
-    pattern: /sk-(proj-)?[a-zA-Z0-9_-]{32,}|sk-ant-[a-zA-Z0-9_-]{32,}/,
+    pattern: /(?<![A-Za-z0-9_-])(sk-ant-[a-zA-Z0-9_-]{32,}|sk-(proj-)?[a-zA-Z0-9_-]{32,})/,
     severity: 'critical',
     category: 'security',
     explanation: 'An AI vendor API key (OpenAI, Anthropic) was found hardcoded in the codebase.',
-    businessImpact: 'Attakers can scrape this key from client bundles or GitHub commits, incurring thousands of dollars in unauthorized inference billing within hours.',
+    businessImpact: 'Attackers can scrape this key from client bundles or GitHub commits, incurring thousands of dollars in unauthorized inference billing within hours.',
     recommendation: 'Rotate the API key immediately. Route all AI model calls through a secure backend API endpoint or server action where keys remain secret.',
     fixGenerator: (snippet, line) => ({
       before: line.trim(),
@@ -120,47 +121,67 @@ const SECRET_RULES: SecretRule[] = [
   }
 ];
 
+function decodeJwtRole(token: string): string | null {
+  try {
+    const payload = token.split('.')[1];
+    const json = JSON.parse(Buffer.from(payload.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'));
+    return typeof json.role === 'string' ? json.role : null;
+  } catch {
+    return null;
+  }
+}
+
+const SKIP_PATH = /(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|\.min\.js|\.svg|\.png|\.jpe?g|\.ico)$/i;
+const EXAMPLE_ENV = /\.env\.(example|sample|template)$/i;
+
 export function scanSecrets(files: FileEntry[]): AuditIssue[] {
   const issues: AuditIssue[] = [];
 
   for (const file of files) {
-    // Skip lockfiles and media
-    if (file.path.includes('package-lock.json') || file.path.includes('.min.js') || file.path.endsWith('.svg')) {
-      continue;
-    }
-
+    if (SKIP_PATH.test(file.path)) continue;
+    const isExampleEnv = EXAMPLE_ENV.test(file.path);
     const lines = file.content.split('\n');
 
     for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
       const line = lines[lineIdx];
 
       for (const rule of SECRET_RULES) {
-        if (rule.pattern.test(line)) {
-          const startLine = Math.max(0, lineIdx - 1);
-          const endLine = Math.min(lines.length - 1, lineIdx + 1);
-          const snippet = lines.slice(startLine, endLine + 1).join('\n');
-          const fix = rule.fixGenerator(snippet, line);
+        const match = line.match(rule.pattern);
+        if (!match) continue;
+        if (isExampleEnv) continue;
 
-          issues.push({
-            id: `${rule.id}-${issues.length + 1}`,
-            title: rule.name,
-            category: 'security',
-            severity: rule.severity,
-            filePath: file.path,
-            lineNumber: lineIdx + 1,
-            snippet,
-            explanation: rule.explanation,
-            businessImpact: rule.businessImpact,
-            recommendation: rule.recommendation,
-            ruleId: rule.id,
-            suggestedFix: {
-              codeBefore: fix.before,
-              codeAfter: fix.after,
-              explanation: fix.explanation,
-              diffSummary: `Line ${lineIdx + 1}: Secure secret storage`
-            }
-          });
+        // Supabase JWTs: only the service_role key is a leak. The anon key is public by design.
+        const isJwt = rule.id === 'SEC-001' && match[0].startsWith('eyJ');
+        if (isJwt) {
+          if (decodeJwtRole(match[0]) !== 'service_role') continue;
+        } else if (PLACEHOLDER_RE.test(match[0])) {
+          continue;
         }
+
+        const startLine = Math.max(0, lineIdx - 1);
+        const endLine = Math.min(lines.length - 1, lineIdx + 1);
+        const snippet = maskSecret(lines.slice(startLine, endLine + 1).join('\n'), rule.pattern);
+        const fix = rule.fixGenerator(snippet, line);
+
+        issues.push({
+          id: `${rule.id}-${issues.length + 1}`,
+          title: rule.name,
+          category: 'security',
+          severity: rule.severity,
+          filePath: file.path,
+          lineNumber: lineIdx + 1,
+          snippet,
+          explanation: rule.explanation,
+          businessImpact: rule.businessImpact,
+          recommendation: rule.recommendation,
+          ruleId: rule.id,
+          suggestedFix: {
+            codeBefore: maskSecret(fix.before, rule.pattern),
+            codeAfter: fix.after,
+            explanation: fix.explanation,
+            diffSummary: `Line ${lineIdx + 1}: Secure secret storage`
+          }
+        });
       }
     }
   }

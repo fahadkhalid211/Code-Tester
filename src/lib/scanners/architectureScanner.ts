@@ -1,4 +1,5 @@
 import { AuditIssue, FileEntry } from '../types';
+import { stripComments } from './utils';
 
 export function scanArchitectureAndReliability(files: FileEntry[]): AuditIssue[] {
   const issues: AuditIssue[] = [];
@@ -6,7 +7,7 @@ export function scanArchitectureAndReliability(files: FileEntry[]): AuditIssue[]
   // Check for Next.js App Router Error Boundaries
   const hasAppDir = files.some(f => f.path.includes('/app/') || f.path.startsWith('app/'));
   if (hasAppDir) {
-    const hasGlobalErrorBoundary = files.some(f => f.path.endsWith('error.tsx') || f.path.endsWith('error.jsx') || f.path.endsWith('global-error.tsx'));
+    const hasGlobalErrorBoundary = files.some(f => /(^|\/)app\/(global-)?error\.(tsx|jsx|ts|js)$/.test(f.path));
     if (!hasGlobalErrorBoundary) {
       issues.push({
         id: 'ARCH-ERR-001',
@@ -29,7 +30,7 @@ export function scanArchitectureAndReliability(files: FileEntry[]): AuditIssue[]
   }
 
   for (const file of files) {
-    const content = file.content;
+    const content = stripComments(file.content);
     const lines = content.split('\n');
 
     // 1. Monolithic Component Bloat (Classic Vibe-Coded / AI Anti-Pattern)
@@ -55,7 +56,7 @@ export function scanArchitectureAndReliability(files: FileEntry[]): AuditIssue[]
 
     // 2. Unhandled Async Exceptions in API Route Handlers
     if (file.path.includes('/api/') || file.path.includes('/routes/')) {
-      const hasAsyncHandler = /export\s+async\s+function\s+(GET|POST|PUT|DELETE|PATCH)/i.test(content);
+      const hasAsyncHandler = /export\s+async\s+function\s+(GET|POST|PUT|DELETE|PATCH)\b/.test(content);
       const hasTryCatch = /try\s*\{/i.test(content);
 
       if (hasAsyncHandler && !hasTryCatch) {

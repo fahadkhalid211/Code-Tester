@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { AuditIssue, IssueCategory, IssueSeverity } from '@/lib/types';
+import { AuditIssue, IssueSeverity } from '@/lib/types';
 import { ShieldAlert, AlertTriangle, Info, Check, Copy, ChevronDown, ChevronRight, FileCode, CheckCircle2 } from 'lucide-react';
 
 interface IssuesListProps {
@@ -20,9 +20,13 @@ export function IssuesList({ issues }: IssuesListProps) {
   };
 
   const copyToClipboard = (text: string, id: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedId(id);
-    setTimeout(() => setCopiedId(null), 2000);
+    navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setCopiedId(id);
+        setTimeout(() => setCopiedId(null), 2000);
+      })
+      .catch(() => setCopiedId(null));
   };
 
   const filteredIssues = issues.filter(issue => {
@@ -144,7 +148,7 @@ export function IssuesList({ issues }: IssuesListProps) {
                   className="p-4 flex items-center justify-between gap-3 cursor-pointer select-none bg-zinc-950/70 hover:bg-zinc-900/50"
                 >
                   <div className="flex items-center space-x-3 min-w-0">
-                    <button className="text-zinc-500 hover:text-zinc-300">
+                    <button aria-expanded={isExpanded} aria-label={isExpanded ? 'Collapse issue' : 'Expand issue'} className="text-zinc-500 hover:text-zinc-300">
                       {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                     </button>
                     {getSeverityBadge(issue.severity)}

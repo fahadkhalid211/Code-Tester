@@ -1,7 +1,9 @@
 import { AuditIssue, FileEntry } from '../types';
+import { compareVersions, parseMinVersion } from './utils';
 
 interface KnownVulnerability {
   name: string;
+  minVulnerableVersion?: string;
   maxVulnerableVersion: string;
   cve: string;
   severity: 'critical' | 'high' | 'medium';
@@ -26,6 +28,7 @@ const KNOWN_VULNERABILITIES: KnownVulnerability[] = [
   },
   {
     name: 'axios',
+    minVulnerableVersion: '1.3.2',
     maxVulnerableVersion: '1.7.3',
     cve: 'CVE-2024-39338',
     severity: 'high',
@@ -110,9 +113,11 @@ export function scanDependencies(files: FileEntry[]): AuditIssue[] {
       // Check known vulnerability list
       const matchedVuln = KNOWN_VULNERABILITIES.find(v => v.name === depName);
       if (matchedVuln) {
-        // Simple version comparison heuristic
-        const cleanVersion = versionStr.replace(/[\^~>=<]/g, '').trim();
-        if (cleanVersion && cleanVersion <= matchedVuln.maxVulnerableVersion) {
+        // Compare the lowest version the range allows against the last vulnerable release.
+        const minVersion = parseMinVersion(versionStr);
+        const maxVuln = parseMinVersion(matchedVuln.maxVulnerableVersion);
+        const minVuln = parseMinVersion(matchedVuln.minVulnerableVersion ?? '0.0.0');
+        if (minVersion && maxVuln && minVuln && compareVersions(minVersion, maxVuln) <= 0 && compareVersions(minVersion, minVuln) >= 0) {
           issues.push({
             id: `DEP-VULN-${depName}-${matchedVuln.cve}`,
             title: `${matchedVuln.title} (${depName})`,
@@ -123,7 +128,7 @@ export function scanDependencies(files: FileEntry[]): AuditIssue[] {
             businessImpact: matchedVuln.businessImpact,
             recommendation: matchedVuln.recommendation,
             cve: matchedVuln.cve,
-            ruleId: `CVE-${matchedVuln.cve}`,
+            ruleId: matchedVuln.cve,
             suggestedFix: {
               codeBefore: `"${depName}": "${versionStr}"`,
               codeAfter: `"${depName}": "${matchedVuln.fixedVersion}"`,
@@ -134,8 +139,18 @@ export function scanDependencies(files: FileEntry[]): AuditIssue[] {
         }
       }
     }
-  } catch (err) {
-    // Malformed package.json
+  } catch {
+    issues.push({
+      id: 'DEP-PARSE-ERROR',
+      title: 'package.json could not be parsed',
+      category: 'dependencies',
+      severity: 'low',
+      filePath: pkgFile.path,
+      explanation: 'The dependency scan was skipped because package.json is not valid JSON.',
+      businessImpact: 'Dependency risk is unknown.',
+      recommendation: 'Fix the JSON syntax and re-run the audit.',
+      ruleId: 'DEP-PARSE-001'
+    });
   }
 
   return issues;

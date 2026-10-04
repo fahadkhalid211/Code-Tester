@@ -1,12 +1,16 @@
-import { AuditIssue, AuditMetrics, AuditResult, CategoryScore, FileEntry, IssueCategory } from './types';
+import { AuditIssue, AuditResult, CategoryScore, FileEntry } from './types';
 import { scanSecrets } from './scanners/secretScanner';
 import { scanSastSecurity } from './scanners/sastSecurityScanner';
 import { scanDependencies } from './scanners/dependencyScanner';
 import { scanArchitectureAndReliability } from './scanners/architectureScanner';
 import { scanPerformance } from './scanners/performanceScanner';
 
-export function runFullAudit(projectName: string, files: FileEntry[]): AuditResult {
+export function runFullAudit(projectName: string, rawFiles: FileEntry[]): AuditResult {
   const startTime = Date.now();
+  // Defensive: ignore malformed entries instead of crashing every scanner.
+  const files = rawFiles.filter(
+    (f): f is FileEntry => !!f && typeof f.path === 'string' && typeof f.content === 'string'
+  );
 
   // 1. Detect Stack
   const stack = detectTechStack(files);
@@ -59,7 +63,7 @@ export function runFullAudit(projectName: string, files: FileEntry[]): AuditResu
   const mediumCount = allIssues.filter(i => i.severity === 'medium').length;
   const lowCount = allIssues.filter(i => i.severity === 'low').length;
 
-  // Strict Hardening: If there are ANY critical issues, score is capped at 58 (Grade F)
+  // Strict hardening: any critical issue caps the score at max(25, 60 - 10 * criticalCount).
   let overallScore = rawWeightedScore;
   if (criticalCount > 0) {
     overallScore = Math.min(overallScore, Math.max(25, 60 - criticalCount * 10));
@@ -77,19 +81,28 @@ export function runFullAudit(projectName: string, files: FileEntry[]): AuditResu
   else letterGrade = 'F';
 
   // 7. Gate Decision & Status
-  const passedGate = overallScore >= 80 && criticalCount === 0 && highCount === 0;
+  // A gate that scanned nothing must not certify anything.
+  const scannable = files.filter(f => /\.(tsx?|jsx?|mjs|cjs|sql)$|(^|\/)package\.json$/.test(f.path));
+  const hasCoverage = scannable.length > 0;
+  const passedGate = hasCoverage && overallScore >= 80 && criticalCount === 0 && highCount === 0;
 
   let clientHandoffStatus: AuditResult['clientHandoffStatus'] = 'BLOCKED: CRITICAL SECURITY FLAWS';
-  if (passedGate) {
+  if (!hasCoverage) {
+    clientHandoffStatus = 'CONDITIONAL PASS (REVIEWS REQUIRED)';
+  } else if (passedGate) {
     clientHandoffStatus = 'READY FOR PRODUCTION';
   } else if (criticalCount === 0 && highCount <= 2) {
     clientHandoffStatus = 'CONDITIONAL PASS (REVIEWS REQUIRED)';
+  } else if (criticalCount === 0) {
+    clientHandoffStatus = 'BLOCKED: HIGH-SEVERITY ISSUES';
   } else {
     clientHandoffStatus = 'BLOCKED: CRITICAL SECURITY FLAWS';
   }
 
   // 8. Executive Summary
-  const executiveSummary = generateExecutiveSummary(
+  const executiveSummary = !hasCoverage
+    ? `No scannable source files (.ts/.tsx/.js/.jsx/.sql/package.json) were provided for "${projectName}", so no verdict can be given.`
+    : generateExecutiveSummary(
     projectName,
     overallScore,
     letterGrade,
@@ -139,8 +152,8 @@ function calculateCategoryScore(issues: AuditIssue[]): CategoryScore {
   const medium = issues.filter(i => i.severity === 'medium').length;
   const low = issues.filter(i => i.severity === 'low').length;
 
-  let deduction = critical * 35 + high * 18 + medium * 8 + low * 3;
-  let score = Math.max(0, 100 - deduction);
+  const deduction = critical * 35 + high * 18 + medium * 8 + low * 3;
+  const score = Math.max(0, 100 - deduction);
 
   let grade: 'A' | 'B' | 'C' | 'D' | 'F' = 'F';
   if (score >= 90) grade = 'A';
@@ -199,14 +212,19 @@ function generateExecutiveSummary(
   highCount: number,
   issues: AuditIssue[]
 ): string {
+  const caveat = ' Automated pattern-based checks only: complete a manual review (auth flows, business logic, infrastructure) before go-live.';
   if (passed) {
-    return `Project "${projectName}" has passed the Production Readiness Gate with an outstanding rating of ${grade} (${score}/100). Zero critical or high-severity vulnerabilities were detected. Architecture follows modular separation of concerns, dependencies are pinned to secure versions, and authentication boundaries are validated. This application is approved for production deployment and client handover.`;
+    return `Project "${projectName}" passed the automated gate with a rating of ${grade} (${score}/100). No critical or high-severity findings were produced by the built-in rule set.${caveat}`;
   }
 
   if (criticalCount > 0) {
     const topIssues = issues.filter(i => i.severity === 'critical').slice(0, 3).map(i => `• ${i.title}`).join('\n');
-    return `CRITICAL DEPLOYMENT ALERT: Project "${projectName}" received a failing rating of ${grade} (${score}/100). The audit uncovered ${criticalCount} critical vulnerability blockades that must be remediated prior to exposing this application to public traffic or handing it over to clients. \n\nImmediate Action Required:\n${topIssues}\n\nDeploying in this state exposes sensitive customer data and violates standard SOC2/OWASP baseline standards.`;
+    return `CRITICAL DEPLOYMENT ALERT: Project "${projectName}" received a failing rating of ${grade} (${score}/100). The audit uncovered ${criticalCount} critical vulnerability blockades that must be remediated prior to exposing this application to public traffic or handing it over to clients. \n\nImmediate Action Required:\n${topIssues}\n\nDeploying in this state risks exposing sensitive customer data.`;
   }
 
-  return `CONDITIONAL REVIEW: Project "${projectName}" received a provisional rating of ${grade} (${score}/100). While no critical data-breach exploits were detected, ${highCount} high-priority reliability or performance bottlenecks remain unaddressed. Review recommended fixes prior to finalizing client delivery.`;
+  if (highCount > 2) {
+    return `BLOCKED: Project "${projectName}" received ${grade} (${score}/100). No critical findings, but ${highCount} high-severity issues exceed the allowed limit of 2. Resolve them and re-run the audit.`;
+  }
+
+  return `CONDITIONAL REVIEW: Project "${projectName}" received a provisional rating of ${grade} (${score}/100). No critical findings, but ${highCount} high-severity issue(s) remain. Review the recommended fixes before client delivery.${caveat}`;
 }

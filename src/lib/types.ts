@@ -55,7 +55,7 @@ export interface AuditResult {
   overallScore: number;
   letterGrade: 'A+' | 'A' | 'B' | 'C' | 'D' | 'F';
   passedGate: boolean;
-  clientHandoffStatus: 'READY FOR PRODUCTION' | 'CONDITIONAL PASS (REVIEWS REQUIRED)' | 'BLOCKED: CRITICAL SECURITY FLAWS';
+  clientHandoffStatus: 'READY FOR PRODUCTION' | 'CONDITIONAL PASS (REVIEWS REQUIRED)' | 'BLOCKED: HIGH-SEVERITY ISSUES' | 'BLOCKED: CRITICAL SECURITY FLAWS';
   executiveSummary: string;
   categoryScores: {
     security: CategoryScore;

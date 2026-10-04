@@ -1,6 +1,6 @@
 import React from 'react';
 import { AuditResult } from '@/lib/types';
-import { ShieldAlert, ShieldCheck, AlertCircle, KeyRound, Bug, FileCode, CheckCircle2 } from 'lucide-react';
+import { ShieldAlert, AlertCircle, KeyRound, Bug, FileCode, CheckCircle2 } from 'lucide-react';
 
 interface ScoreGaugeProps {
   result: AuditResult;

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { DEMO_PROJECTS, DemoProject } from '@/lib/demoProjects';
-import { Play, Code2, AlertTriangle, ShieldCheck, CheckCircle2, Upload, FileCode } from 'lucide-react';
+import { DEMO_PROJECTS } from '@/lib/demoProjects';
+import { Play, Code2, CheckCircle2 } from 'lucide-react';
 import { FileEntry } from '@/lib/types';
 
 interface ProjectSelectorProps {
@@ -79,12 +79,16 @@ export async function deleteRecord(id: string) {
       </div>
 
       {activeTab === 'demos' ? (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div role="radiogroup" aria-label="Demo repositories" className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {DEMO_PROJECTS.map((demo) => {
             const isSelected = selectedDemoId === demo.id;
             return (
               <div
                 key={demo.id}
+                role="radio"
+                aria-checked={isSelected}
+                tabIndex={0}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedDemoId(demo.id); } }}
                 onClick={() => setSelectedDemoId(demo.id)}
                 className={`relative p-5 rounded-xl border text-left cursor-pointer transition-all ${
                   isSelected
@@ -158,13 +162,13 @@ export async function deleteRecord(id: string) {
 
         <button
           onClick={handleRun}
-          disabled={isLoading}
+          disabled={isLoading || (activeTab === 'custom' && !customFileContent.trim())}
           className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-gradient-to-r from-indigo-500 via-indigo-600 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white text-xs font-semibold shadow-lg shadow-indigo-500/25 transition-all flex items-center justify-center space-x-2 cursor-pointer disabled:opacity-50"
         >
           {isLoading ? (
             <>
               <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-              <span>Analyzing Sandbox...</span>
+              <span>Analyzing...</span>
             </>
           ) : (
             <>
